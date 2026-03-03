@@ -1,0 +1,119 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install pyinstaller pillow psutil
+
+      - name: Build executable
+        run: pyinstaller --onefile --noconsole src/bginfo.py --name bginfo
+
+      - name: Build installer
+        uses: Minionguyjpro/Inno-Setup-Action@v1.2.2
+        with:
+          path: installer/windows/bginfo.iss
+          options: /O"dist"
+
+      - name: Upload Windows installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer
+          path: dist/MyBGInfo-Setup.exe
+
+  build-linux:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install pyinstaller pillow psutil
+
+      - name: Build executable
+        run: pyinstaller --onefile src/bginfo.py --name bginfo
+
+      - name: Upload Linux binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-binary
+          path: dist/bginfo
+
+  build-macos:
+    runs-on: macos-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install pyinstaller pillow psutil
+
+      - name: Build executable
+        run: pyinstaller --onefile src/bginfo.py --name bginfo
+
+      - name: Upload macOS binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-binary
+          path: dist/bginfo
+
+  release:
+    needs: [build-windows, build-linux, build-macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download Windows installer
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-installer
+          path: release-artifacts/windows
+
+      - name: Download Linux binary
+        uses: actions/download-artifact@v4
+        with:
+          name: linux-binary
+          path: release-artifacts/linux
+
+      - name: Download macOS binary
+        uses: actions/download-artifact@v4
+        with:
+          name: macos-binary
+          path: release-artifacts/macos
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            release-artifacts/windows/MyBGInfo-Setup.exe
+            release-artifacts/linux/bginfo
+            release-artifacts/macos/bginfo

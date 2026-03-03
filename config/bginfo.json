@@ -1,0 +1,15 @@
+{
+  "background_image": "assets/default_bg.jpg",
+  "output_file": "wallpaper_output.bmp",
+  "text_color": [255, 255, 255],
+  "title_color": [0, 220, 255],
+  "background_color": [0, 0, 40],
+  "font_path": null,
+  "font_size": 26,
+  "position": { "x": 50, "y": 50 },
+  "line_spacing": 38,
+  "fields": [
+    "Hostname", "User", "OS", "CPU", "RAM", "RAM Used",
+    "Disk Total", "Disk Used", "IP Address", "Boot Time", "Date/Time"
+  ]
+}
