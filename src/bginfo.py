@@ -11,6 +11,16 @@ from src.config import load_config
 from src.sysinfo import get_info
 from src.wallpaper import set_wallpaper
 
+# Directory containing this script – used to resolve relative paths.
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+
+
+def _resolve_path(path: str | None) -> str | None:
+    """Resolve a path relative to the script directory when it is not absolute."""
+    if path and not os.path.isabs(path):
+        return os.path.join(_SCRIPT_DIR, "..", path)
+    return path
+
 
 def generate_wallpaper(cfg: dict) -> str:
     """Generate the wallpaper image with system information text.
@@ -22,6 +32,7 @@ def generate_wallpaper(cfg: dict) -> str:
         Path to the saved output image.
     """
     bg = cfg.get("background_image")
+    bg = _resolve_path(bg)
     if bg and os.path.exists(bg):
         img = Image.open(bg).convert("RGB")
     else:
@@ -56,7 +67,8 @@ def generate_wallpaper(cfg: dict) -> str:
 
     title_text = cfg.get("title_text", "System Information")
 
-    alignment = cfg.get("text_alignment", "left")
+    # Support both "text_align" (new) and legacy "text_alignment"
+    alignment = cfg.get("text_align") or cfg.get("text_alignment", "left")
     margin = cfg.get("text_margin", 50)
     y = cfg.get("position_y", 50)
 
@@ -80,11 +92,14 @@ def generate_wallpaper(cfg: dict) -> str:
     max_text_width = max((_text_width(text, fnt) for text, fnt, _ in lines), default=200)
 
     if alignment == "right":
-        x = img_width - max_text_width - margin
+        x = img_width - margin
+        pil_anchor = "ra"
     elif alignment == "center":
-        x = (img_width - max_text_width) // 2
+        x = img_width // 2
+        pil_anchor = "ma"
     else:  # "left"
         x = margin
+        pil_anchor = "la"
 
     x = max(0, x)
 
@@ -97,8 +112,17 @@ def generate_wallpaper(cfg: dict) -> str:
         bg_color = tuple(cfg.get("text_bg_color", [0, 0, 20]))
         overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
         ov_draw = ImageDraw.Draw(overlay)
+        if alignment == "right":
+            panel_x0 = x - max_text_width - 8
+            panel_x1 = x + 8
+        elif alignment == "center":
+            panel_x0 = x - max_text_width // 2 - 8
+            panel_x1 = x + max_text_width // 2 + 8
+        else:
+            panel_x0 = x - 8
+            panel_x1 = x + max_text_width + 8
         ov_draw.rectangle(
-            [x - 8, y - 4, x + max_text_width + 8, y + panel_height],
+            [panel_x0, y - 4, panel_x1, y + panel_height],
             fill=(*bg_color, alpha),
         )
         img = img.convert("RGBA")
@@ -107,12 +131,20 @@ def generate_wallpaper(cfg: dict) -> str:
     draw = ImageDraw.Draw(img)
 
     # ------------------------------------------------------------------ #
-    # Helper to draw optional shadow then text                            #
+    # Helper to draw optional shadow then text (with PIL anchor)          #
     # ------------------------------------------------------------------ #
-    def _draw_text(px: int, py: int, text: str, fill, font) -> None:
+    def _draw_text(px: int, py: int, text: str, fill, font, anchor: str = pil_anchor) -> None:
         if use_shadow:
-            draw.text((px + 2, py + 2), text, fill=shadow_color, font=font)
-        draw.text((px, py), text, fill=fill, font=font)
+            draw.text((px + 2, py + 2), text, fill=shadow_color, font=font, anchor=anchor)
+        draw.text((px, py), text, fill=fill, font=font, anchor=anchor)
+
+    def _line_left_x(line_width: int) -> int:
+        """Return the left-edge x for a given line width, based on alignment."""
+        if alignment == "right":
+            return x - line_width
+        if alignment == "center":
+            return x - line_width // 2
+        return x  # "left"
 
     # ------------------------------------------------------------------ #
     # Draw title                                                          #
@@ -123,7 +155,13 @@ def generate_wallpaper(cfg: dict) -> str:
     # Optional separator line
     if use_separator:
         sep_y = y - 6
-        draw.line([(x, sep_y), (x + max_text_width, sep_y)], fill=separator_color, width=1)
+        if alignment == "right":
+            sep_x0, sep_x1 = x - max_text_width, x
+        elif alignment == "center":
+            sep_x0, sep_x1 = x - max_text_width // 2, x + max_text_width // 2
+        else:
+            sep_x0, sep_x1 = x, x + max_text_width
+        draw.line([(sep_x0, sep_y), (sep_x1, sep_y)], fill=separator_color, width=1)
 
     # ------------------------------------------------------------------ #
     # Draw fields                                                         #
@@ -136,13 +174,16 @@ def generate_wallpaper(cfg: dict) -> str:
             label_part, value_part = line_text.split(": ", 1)
             label_str = label_part + ": "
             label_w = _text_width(label_str, font_body)
-            _draw_text(x, y, label_str, label_color, font_body)
-            _draw_text(x + label_w, y, value_part, value_color, font_body)
+            line_w = _text_width(line_text, font_body)
+            lx = _line_left_x(line_w)
+            _draw_text(lx, y, label_str, label_color, font_body, anchor="la")
+            _draw_text(lx + label_w, y, value_part, value_color, font_body, anchor="la")
         else:
             _draw_text(x, y, line_text, value_color, font_body)
         y += spacing
 
     out = cfg.get("output_file", "wallpaper_output.bmp")
+    out = _resolve_path(out) or "wallpaper_output.bmp"
     img.save(out)
     return out
 

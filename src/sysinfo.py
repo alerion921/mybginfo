@@ -3,6 +3,7 @@ import datetime
 import os
 import platform
 import socket
+import subprocess
 
 try:
     import psutil
@@ -50,13 +51,106 @@ def get_windows_version_name(version_str: str, build_number: int) -> str:
     if major == 6 and minor == 3:
         return "Windows 8.1"
     if major == 10:
-        if build_number >= 26100:
-            return "Windows 12"
         if build_number >= 22000:
             return "Windows 11"
         if build_number >= 10240:
             return "Windows 10"
     return f"Windows NT {major}.{minor}"
+
+
+def _get_windows_os_name() -> str:
+    """Read the friendly OS name from the Windows registry.
+
+    Returns:
+        A string like "Windows 11 23H2", or an empty string on failure.
+    """
+    try:
+        import winreg  # noqa: PLC0415
+        key = winreg.OpenKey(
+            winreg.HKEY_LOCAL_MACHINE,
+            r"SOFTWARE\Microsoft\Windows NT\CurrentVersion",
+        )
+        product_name = winreg.QueryValueEx(key, "ProductName")[0]
+        try:
+            display_version = winreg.QueryValueEx(key, "DisplayVersion")[0]
+            return f"{product_name} {display_version}"
+        except OSError:
+            return product_name
+    except Exception:
+        return ""
+
+
+def _get_cpu_name() -> str:
+    """Return a friendly CPU model name.
+
+    On Windows, reads from the registry (ProcessorNameString).
+    Falls back to ``platform.processor()`` on any failure or non-Windows OS.
+    """
+    if platform.system() == "Windows":
+        try:
+            import winreg  # noqa: PLC0415
+            key = winreg.OpenKey(
+                winreg.HKEY_LOCAL_MACHINE,
+                r"HARDWARE\DESCRIPTION\System\CentralProcessor\0",
+            )
+            return winreg.QueryValueEx(key, "ProcessorNameString")[0].strip()
+        except Exception:
+            pass
+    return platform.processor() or "Unknown"
+
+
+def _get_gpu_name() -> str:
+    """Return the primary GPU name using platform-native commands.
+
+    Windows: wmic; Linux: lspci; macOS: system_profiler.
+    Falls back gracefully to "Unknown".
+    """
+    system = platform.system()
+    try:
+        if system == "Windows":
+            result = subprocess.check_output(
+                ["wmic", "path", "win32_VideoController", "get", "Name"],
+                stderr=subprocess.DEVNULL,
+            ).decode(errors="ignore")
+            lines = [
+                line.strip()
+                for line in result.strip().splitlines()
+                if line.strip() and line.strip().lower() != "name"
+            ]
+            return lines[0] if lines else "Unknown"
+        if system == "Linux":
+            result = subprocess.check_output(
+                ["lspci"],
+                stderr=subprocess.DEVNULL,
+            ).decode(errors="ignore")
+            for line in result.splitlines():
+                lower = line.lower()
+                if "vga" in lower or "3d" in lower or "display" in lower:
+                    # Strip the PCI address prefix, keep the device name
+                    parts = line.split(":", 2)
+                    return parts[-1].strip() if parts else line.strip()
+            return "Unknown"
+        if system == "Darwin":
+            result = subprocess.check_output(
+                ["system_profiler", "SPDisplaysDataType"],
+                stderr=subprocess.DEVNULL,
+            ).decode(errors="ignore")
+            for line in result.splitlines():
+                if "Chipset Model" in line or "Graphics" in line:
+                    parts = line.split(":", 1)
+                    if len(parts) == 2 and parts[1].strip():
+                        return parts[1].strip()
+            return "Unknown"
+    except Exception:
+        pass
+    # Final fallback: try GPUtil if available
+    if _HAS_GPUTIL:
+        try:
+            gpus = GPUtil.getGPUs()
+            return gpus[0].name if gpus else "Unknown"
+        except Exception:
+            pass
+    return "Unknown"
 
 
 def _get_screen_resolution() -> str:
@@ -95,20 +189,24 @@ def get_info() -> dict:
     # OS friendly name
     system = platform.system()
     if system == "Windows":
-        try:
-            ver = platform.version()  # e.g. "10.0.22621"
-            ver_parts = ver.split(".")
-            build = int(ver_parts[2]) if len(ver_parts) > 2 else 0
-            nt_ver = f"{ver_parts[0]}.{ver_parts[1]}" if len(ver_parts) > 1 else ver_parts[0]
-            friendly = get_windows_version_name(nt_ver, build)
-            info["OS"] = f"{friendly} (Build {build})"
-        except Exception:
-            info["OS"] = f"Windows {platform.release()}"
+        friendly = _get_windows_os_name()
+        if not friendly:
+            try:
+                ver = platform.version()  # e.g. "10.0.22621"
+                ver_parts = ver.split(".")
+                build = int(ver_parts[2]) if len(ver_parts) > 2 else 0
+                nt_ver = f"{ver_parts[0]}.{ver_parts[1]}" if len(ver_parts) > 1 else ver_parts[0]
+                friendly = get_windows_version_name(nt_ver, build)
+                info["OS"] = f"{friendly} (Build {build})"
+            except Exception:
+                info["OS"] = f"Windows {platform.release()}"
+        else:
+            info["OS"] = friendly
     else:
         info["OS"] = f"{system} {platform.release()}"
 
     # CPU model
-    info["CPU"] = platform.processor() or "Unknown"
+    info["CPU"] = _get_cpu_name()
 
     if _HAS_PSUTIL:
         # CPU core count
@@ -178,14 +276,7 @@ def get_info() -> dict:
         info["Network Recv"] = "N/A"
 
     # GPU
-    if _HAS_GPUTIL:
-        try:
-            gpus = GPUtil.getGPUs()
-            info["GPU"] = gpus[0].name if gpus else "N/A"
-        except Exception:
-            info["GPU"] = "N/A"
-    else:
-        info["GPU"] = "N/A"
+    info["GPU"] = _get_gpu_name()
 
     # Screen resolution
     info["Screen Resolution"] = _get_screen_resolution()
