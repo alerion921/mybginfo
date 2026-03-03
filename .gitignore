@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+dist/
+build/
+*.spec
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Generated output
+wallpaper_output.bmp
+wallpaper_output.png
+
+# PyInstaller
+dist/
+build/
+
+# macOS
+.DS_Store
+
+# Windows
+Thumbs.db
