@@ -1,4 +1,5 @@
 """Tkinter GUI configurator for MyBGInfo."""
+import platform as _platform
 import tkinter as tk
 from tkinter import colorchooser, filedialog, messagebox, ttk
 
@@ -58,6 +59,14 @@ class BGInfoGUI:
         ttk.Button(btn_frame, text="Reset Defaults", command=self._reset).pack(
             side="left", padx=4
         )
+
+        if _platform.system() == "Windows":
+            ttk.Button(btn_frame, text="Create Service", command=self._create_service).pack(
+                side="left", padx=4
+            )
+            ttk.Button(btn_frame, text="Remove Service", command=self._remove_service).pack(
+                side="left", padx=4
+            )
 
     def _build_appearance_tab(self, notebook):
         frame = ttk.Frame(notebook, padding=10)
@@ -121,7 +130,7 @@ class BGInfoGUI:
         )
         row += 1
 
-        # Text alignment
+        # Text alignment (radio buttons – legacy "text_alignment")
         ttk.Label(frame, text="Text Alignment:").grid(row=row, column=0, sticky="w", pady=4)
         self._alignment_var = tk.StringVar(value=self.cfg.get("text_alignment", "left"))
         align_frame = ttk.Frame(frame)
@@ -130,6 +139,20 @@ class BGInfoGUI:
             ttk.Radiobutton(
                 align_frame, text=lbl, variable=self._alignment_var, value=val
             ).pack(side="left", padx=4)
+        row += 1
+
+        # Text Alignment dropdown (new "text_align" key)
+        ttk.Label(frame, text="Text Align:").grid(row=row, column=0, sticky="w", pady=4)
+        _align_labels = {"Left": "left", "Center": "center", "Right": "right"}
+        _align_display = {v: k for k, v in _align_labels.items()}
+        current_align = self.cfg.get("text_align", "left")
+        self._text_align_var = tk.StringVar(
+            value=_align_display.get(current_align, "Left")
+        )
+        tk.OptionMenu(frame, self._text_align_var, "Left", "Center", "Right").grid(
+            row=row, column=1, sticky="w", padx=4
+        )
+        self._align_labels_map = _align_labels
         row += 1
 
         # Text margin
@@ -435,6 +458,7 @@ class BGInfoGUI:
             "font_size": self._font_size_var.get(),
             "title_text": self._title_text_var.get().strip() or "System Information",
             "text_alignment": self._alignment_var.get(),
+            "text_align": self._align_labels_map.get(self._text_align_var.get(), "left"),
             "text_margin": self._margin_var.get(),
             "position_y": self._pos_y_var.get(),
             "line_spacing": self._spacing_var.get(),
@@ -468,6 +492,24 @@ class BGInfoGUI:
             cfg = self._build_config()
             save_config(cfg)
             messagebox.showinfo("Saved", "Configuration saved to config/bginfo.json")
+        except Exception as exc:
+            messagebox.showerror("Error", str(exc))
+
+    def _create_service(self):
+        """Install the Windows background service."""
+        try:
+            from src.service_manager import install_service  # noqa: PLC0415
+            install_service()
+            messagebox.showinfo("Service", "MyBGInfo service installation initiated.")
+        except Exception as exc:
+            messagebox.showerror("Error", str(exc))
+
+    def _remove_service(self):
+        """Remove the Windows background service."""
+        try:
+            from src.service_manager import remove_service  # noqa: PLC0415
+            remove_service()
+            messagebox.showinfo("Service", "MyBGInfo service removal initiated.")
         except Exception as exc:
             messagebox.showerror("Error", str(exc))
 

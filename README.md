@@ -11,13 +11,14 @@
 
 ## Features
 
-- 📊 Displays live system info: hostname, user, OS, CPU, RAM, disk, IP address, boot time, and more
+- 📊 Displays live system info: hostname, user, OS, CPU, GPU, RAM, disk, IP address, boot time, uptime, and more
 - 🖼️ Renders text directly onto a custom background image (or generates a solid-color canvas)
-- 🎨 Fully configurable: colors, font, font size, position, line spacing, and which fields to show
+- 🎨 Fully configurable: colors, font, font size, position, line spacing, text alignment, and which fields to show
 - 🖥️ Cross-platform: Windows, macOS, and Linux (GNOME, KDE, XFCE, and feh fallback)
 - 🧰 Tkinter GUI for visual configuration with live preview
 - ⚙️ JSON-based configuration (`config/bginfo.json`)
 - 📦 Windows installer (Inno Setup), and install scripts for Linux and macOS
+- 🔄 Windows service support – run as a background service via the **Create Service** button
 
 ---
 
@@ -95,11 +96,29 @@ Configuration lives in `config/bginfo.json`. Missing keys automatically fall bac
 | `title_color` | `[R,G,B]` | Color of the "System Information" title. |
 | `font_path` | string\|null | Path to a `.ttf` font. Falls back to PIL default if null. |
 | `font_size` | int | Font size in points. |
-| `position` | `{"x": N, "y": N}` | Top-left corner of the text block. |
+| `text_margin` | int | Pixels from the chosen screen edge (replaces legacy `position.x`). |
+| `position_y` | int | Vertical offset from the top in pixels (replaces legacy `position.y`). |
 | `line_spacing` | int | Pixels between lines. |
+| `text_align` | string | Text alignment: `"left"` (default), `"center"`, or `"right"`. |
+| `refresh_interval` | int | Seconds between auto-refresh updates (0 = disabled). Default: `300`. |
 | `fields` | list of strings | Which system info fields to display. |
 
-**Available fields:** `Hostname`, `User`, `OS`, `Version`, `CPU`, `CPU Cores`, `RAM`, `RAM Used`, `Disk Total`, `Disk Used`, `IP Address`, `Boot Time`, `Date/Time`
+**Available fields:** `Hostname`, `User`, `OS`, `Version`, `CPU`, `GPU`, `CPU Cores`, `CPU Usage`, `RAM`, `RAM Used`, `Disk Total`, `Disk Used`, `IP Address`, `Boot Time`, `Uptime`, `Date/Time`, `Screen Resolution`, `Network Sent`, `Network Recv`
+
+---
+
+## Windows Service
+
+On Windows, MyBGInfo can run as a background service that automatically refreshes the wallpaper on a schedule.
+
+1. Open the GUI (`python -m src.bginfo --gui`).
+2. Set your desired **Refresh Interval** in the Refresh tab.
+3. Click **Create Service** at the bottom of the window (requires elevation / UAC prompt).
+4. To uninstall, click **Remove Service**.
+
+The service reads `refresh_interval` from `config/bginfo.json` each cycle, so you can change the interval without reinstalling the service.
+
+> **Note:** Requires `pywin32` (`pip install pywin32`). On Linux and macOS use the crontab / LaunchAgent installers instead.
 
 ---
 

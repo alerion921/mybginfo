@@ -12,15 +12,16 @@ DEFAULT_CONFIG = {
     "font_size": 26,
     "line_spacing": 38,
     "fields": [
-        "Hostname", "User", "OS", "CPU", "RAM", "RAM Used",
-        "Disk Total", "Disk Used", "IP Address", "Boot Time", "Date/Time"
+        "Hostname", "User", "OS", "CPU", "GPU", "CPU Cores", "RAM", "RAM Used",
+        "Disk Total", "Disk Used", "IP Address", "Boot Time", "Uptime", "Date/Time"
     ],
     # Layout / alignment
-    "text_alignment": "left",   # "left" | "center" | "right"
+    "text_align": "left",       # "left" | "center" | "right"  (new key)
+    "text_alignment": "left",   # legacy alias kept for backward compat
     "text_margin": 50,          # pixels from the chosen screen edge
     "position_y": 50,           # vertical offset from top
     # Refresh
-    "refresh_interval": 60,     # seconds between live updates (0 = disabled)
+    "refresh_interval": 300,    # seconds between live updates (0 = disabled)
     # Shadow
     "shadow": True,
     "shadow_color": [0, 0, 0],
@@ -44,16 +45,24 @@ def load_config(path="config/bginfo.json"):
 
     Backward-compatible: keys missing from a saved file fall back to defaults.
     The legacy ``position`` dict (``{"x": …, "y": …}``) is migrated to the new
-    ``text_margin`` / ``position_y`` keys automatically.
+    ``text_margin`` / ``position_y`` keys automatically.  Partial ``position``
+    dicts are deep-merged so that specifying only ``position.x`` does not wipe
+    out ``position.y``.
     """
     if os.path.exists(path):
         with open(path, "r") as f:
             saved = json.load(f)
-        # Migrate legacy position dict – `saved` is a fresh local dict from JSON, safe to mutate
-        if "position" in saved and "text_margin" not in saved:
+        # Deep-merge legacy position dict
+        if "position" in saved:
             pos = saved.pop("position")
-            saved.setdefault("text_margin", pos.get("x", 50))
-            saved.setdefault("position_y", pos.get("y", 50))
+            default_pos = DEFAULT_CONFIG.get("position", {}) if isinstance(
+                DEFAULT_CONFIG.get("position"), dict
+            ) else {}
+            merged_pos = {**default_pos, **pos}
+            if "text_margin" not in saved:
+                saved.setdefault("text_margin", merged_pos.get("x", 50))
+            if "position_y" not in saved:
+                saved.setdefault("position_y", merged_pos.get("y", 50))
         return {**DEFAULT_CONFIG, **saved}
     return DEFAULT_CONFIG.copy()
 

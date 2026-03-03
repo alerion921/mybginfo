@@ -6,10 +6,13 @@
   "background_color": [0, 0, 40],
   "font_path": null,
   "font_size": 26,
-  "position": { "x": 50, "y": 50 },
+  "text_margin": 50,
+  "position_y": 50,
   "line_spacing": 38,
+  "text_align": "left",
+  "refresh_interval": 300,
   "fields": [
-    "Hostname", "User", "OS", "CPU", "RAM", "RAM Used",
-    "Disk Total", "Disk Used", "IP Address", "Boot Time", "Date/Time"
+    "Hostname", "User", "OS", "CPU", "GPU", "CPU Cores", "RAM", "RAM Used",
+    "Disk Total", "Disk Used", "IP Address", "Boot Time", "Uptime", "Date/Time"
   ]
 }
