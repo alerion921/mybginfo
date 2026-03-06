@@ -18,6 +18,12 @@ except ImportError:
     _HAS_GPUTIL = False
 
 try:
+    import pynvml
+    _HAS_PYNVML = True
+except ImportError:
+    _HAS_PYNVML = False
+
+try:
     from screeninfo import get_monitors
     _HAS_SCREENINFO = True
 except ImportError:
@@ -73,9 +79,22 @@ def _get_windows_os_name() -> str:
         product_name = winreg.QueryValueEx(key, "ProductName")[0]
         try:
             display_version = winreg.QueryValueEx(key, "DisplayVersion")[0]
-            return f"{product_name} {display_version}"
         except OSError:
-            return product_name
+            display_version = ""
+        # Read the actual build number to correct the product name if needed
+        try:
+            build_str = winreg.QueryValueEx(key, "CurrentBuildNumber")[0]
+            build_number = int(build_str)
+        except (OSError, ValueError):
+            build_number = 0
+
+        # Fix: ProductName may say "Windows 10" even on Windows 11 (build >= 22000)
+        if build_number >= 22000 and "Windows 10" in product_name:
+            product_name = product_name.replace("Windows 10", "Windows 11")
+
+        if display_version:
+            return f"{product_name} {display_version}"
+        return product_name
     except Exception:
         return ""
 
@@ -102,22 +121,59 @@ def _get_cpu_name() -> str:
 def _get_gpu_name() -> str:
     """Return the primary GPU name using platform-native commands.
 
-    Windows: wmic; Linux: lspci; macOS: system_profiler.
+    Windows: pynvml (NVIDIA) -> wmic -> PowerShell; Linux: lspci; macOS: system_profiler.
     Falls back gracefully to "Unknown".
     """
     system = platform.system()
     try:
         if system == "Windows":
-            result = subprocess.check_output(
-                ["wmic", "path", "win32_VideoController", "get", "Name"],
-                stderr=subprocess.DEVNULL,
-            ).decode(errors="ignore")
-            lines = [
-                line.strip()
-                for line in result.strip().splitlines()
-                if line.strip() and line.strip().lower() != "name"
-            ]
-            return lines[0] if lines else "Unknown"
+            # First try pynvml for NVIDIA GPUs
+            if _HAS_PYNVML:
+                try:
+                    pynvml.nvmlInit()
+                    handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+                    name = pynvml.nvmlDeviceGetName(handle)
+                    if isinstance(name, bytes):
+                        name = name.decode()
+                    pynvml.nvmlShutdown()
+                    return name
+                except Exception:
+                    try:
+                        pynvml.nvmlShutdown()
+                    except Exception:
+                        pass
+            # Then try wmic
+            try:
+                result = subprocess.check_output(
+                    ["wmic", "path", "win32_VideoController", "get", "Name"],
+                    stderr=subprocess.DEVNULL,
+                ).decode(errors="ignore")
+                lines = [
+                    line.strip()
+                    for line in result.strip().splitlines()
+                    if line.strip() and line.strip().lower() != "name"
+                ]
+                if lines:
+                    return lines[0]
+            except Exception:
+                pass
+            # Finally try PowerShell as fallback
+            try:
+                result = subprocess.check_output(
+                    ["powershell", "-NoProfile", "-Command",
+                     "Get-WmiObject Win32_VideoController | Select-Object -ExpandProperty Name"],
+                    stderr=subprocess.DEVNULL,
+                ).decode(errors="ignore")
+                lines = [
+                    line.strip()
+                    for line in result.strip().splitlines()
+                    if line.strip()
+                ]
+                if lines:
+                    return lines[0]
+            except Exception:
+                pass
+            return "Unknown"
         if system == "Linux":
             result = subprocess.check_output(
                 ["lspci"],
@@ -251,7 +307,7 @@ def get_info() -> dict:
                     )
                 except PermissionError:
                     continue
-            info["All Disks"] = "   |   ".join(parts) if parts else "N/A"
+            info["All Disks"] = "\n".join(parts) if parts else "N/A"
         except Exception:
             info["All Disks"] = "N/A"
 
@@ -300,7 +356,7 @@ def get_info() -> dict:
     # GPU name
     info["GPU"] = _get_gpu_name()
 
-    # GPU usage / temperature (via GPUtil)
+    # GPU usage / temperature (via GPUtil or pynvml)
     if _HAS_GPUTIL:
         try:
             gpus = GPUtil.getGPUs()
@@ -311,6 +367,22 @@ def get_info() -> dict:
                 info["GPU Usage"] = "N/A"
                 info["GPU Temp"] = "N/A"
         except Exception:
+            info["GPU Usage"] = "N/A"
+            info["GPU Temp"] = "N/A"
+    elif _HAS_PYNVML:
+        try:
+            pynvml.nvmlInit()
+            handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+            util = pynvml.nvmlDeviceGetUtilizationRates(handle)
+            temp = pynvml.nvmlDeviceGetTemperature(handle, pynvml.NVML_TEMPERATURE_GPU)
+            pynvml.nvmlShutdown()
+            info["GPU Usage"] = f"{util.gpu}%"
+            info["GPU Temp"] = f"{temp}°C"
+        except Exception:
+            try:
+                pynvml.nvmlShutdown()
+            except Exception:
+                pass
             info["GPU Usage"] = "N/A"
             info["GPU Temp"] = "N/A"
     else:
