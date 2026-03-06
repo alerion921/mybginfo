@@ -28,15 +28,39 @@ def _run_elevated(action: str) -> None:
     )
 
 
+def _do_install() -> None:
+    """Actually install (with auto-start) and start the service (must run elevated)."""
+    import win32service  # noqa: PLC0415
+    import win32serviceutil  # noqa: PLC0415
+    win32serviceutil.InstallService(
+        pythonClassString="src.service_manager.MyBGInfoService",
+        serviceName=SERVICE_NAME,
+        displayName=SERVICE_DISPLAY,
+        startType=win32service.SERVICE_AUTO_START,
+        exeName=sys.executable,
+    )
+    win32serviceutil.StartService(SERVICE_NAME)
+
+
+def _do_remove() -> None:
+    """Actually stop and remove the service (must run elevated)."""
+    import win32serviceutil  # noqa: PLC0415
+    try:
+        win32serviceutil.StopService(SERVICE_NAME)
+    except Exception:
+        pass
+    win32serviceutil.RemoveService(SERVICE_NAME)
+
+
 def install_service() -> None:
-    """Install and start the Windows service (requests elevation via runas)."""
+    """Install (with auto-start) and start the Windows service (requests elevation via runas)."""
     try:
         import win32serviceutil  # noqa: PLC0415, F401
     except ImportError as exc:
         raise RuntimeError(
             "pywin32 is not installed. Run: pip install pywin32"
         ) from exc
-    _run_elevated("install")
+    _run_elevated("_do_install")
 
 
 def remove_service() -> None:
@@ -47,7 +71,7 @@ def remove_service() -> None:
         raise RuntimeError(
             "pywin32 is not installed. Run: pip install pywin32"
         ) from exc
-    _run_elevated("remove")
+    _run_elevated("_do_remove")
 
 
 try:
@@ -105,9 +129,16 @@ except ImportError:
 
 
 if __name__ == "__main__":
-    # Allow module invocation: python -m src.service_manager install|remove|start|stop
-    try:
-        win32serviceutil.HandleCommandLine(MyBGInfoService)
-    except NameError:
-        print("pywin32 is not installed. Cannot manage the Windows service.")
-        sys.exit(1)
+    # Allow module invocation: python -m src.service_manager <action>
+    # Supported actions: _do_install, _do_remove, install, remove, start, stop
+    action = sys.argv[1] if len(sys.argv) > 1 else ""
+    if action == "_do_install":
+        _do_install()
+    elif action == "_do_remove":
+        _do_remove()
+    else:
+        try:
+            win32serviceutil.HandleCommandLine(MyBGInfoService)
+        except NameError:
+            print("pywin32 is not installed. Cannot manage the Windows service.")
+            sys.exit(1)

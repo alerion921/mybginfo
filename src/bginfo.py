@@ -86,8 +86,14 @@ def generate_wallpaper(cfg: dict) -> str:
 
     lines = [(title_text, font_title, True)]
     for key in fields:
-        value = info.get(key, "N/A")
-        lines.append((f"{key}: {value}", font_body, False))
+        value = str(info.get(key, "N/A"))
+        if "\n" in value:
+            sub_lines = value.split("\n")
+            lines.append((f"{key}: {sub_lines[0]}", font_body, False))
+            for sub in sub_lines[1:]:
+                lines.append((f"  {sub}", font_body, False))
+        else:
+            lines.append((f"{key}: {value}", font_body, False))
 
     max_text_width = max((_text_width(text, fnt) for text, fnt, _ in lines), default=200)
 
@@ -106,8 +112,12 @@ def generate_wallpaper(cfg: dict) -> str:
     # ------------------------------------------------------------------ #
     # Optional semi-transparent background panel                          #
     # ------------------------------------------------------------------ #
+    total_lines = sum(
+        len(str(info.get(key, "N/A")).split("\n"))
+        for key in fields
+    )
     if use_panel:
-        panel_height = spacing + 10 + len(fields) * spacing + 10
+        panel_height = spacing + 10 + total_lines * spacing + 10
         alpha = cfg.get("text_bg_alpha", 160)
         bg_color = tuple(cfg.get("text_bg_color", [0, 0, 20]))
         overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
@@ -167,20 +177,43 @@ def generate_wallpaper(cfg: dict) -> str:
     # Draw fields                                                         #
     # ------------------------------------------------------------------ #
     for key in fields:
-        value = info.get(key, "N/A")
-        line_text = f"{key}: {value}"
-        # Split label / value and colour them individually
-        if ": " in line_text:
-            label_part, value_part = line_text.split(": ", 1)
-            label_str = label_part + ": "
-            label_w = _text_width(label_str, font_body)
-            line_w = _text_width(line_text, font_body)
-            lx = _line_left_x(line_w)
-            _draw_text(lx, y, label_str, label_color, font_body, anchor="la")
-            _draw_text(lx + label_w, y, value_part, value_color, font_body, anchor="la")
+        value = str(info.get(key, "N/A"))
+        if "\n" in value:
+            sub_lines = value.split("\n")
+            # Draw first sub-line with label + first value
+            line_text = f"{key}: {sub_lines[0]}"
+            if ": " in line_text:
+                label_part, value_part = line_text.split(": ", 1)
+                label_str = label_part + ": "
+                label_w = _text_width(label_str, font_body)
+                line_w = _text_width(line_text, font_body)
+                lx = _line_left_x(line_w)
+                _draw_text(lx, y, label_str, label_color, font_body, anchor="la")
+                _draw_text(lx + label_w, y, value_part, value_color, font_body, anchor="la")
+            else:
+                _draw_text(x, y, line_text, value_color, font_body)
+            y += spacing
+            # Draw continuation lines (indented)
+            for sub in sub_lines[1:]:
+                cont_text = f"  {sub}"
+                cont_w = _text_width(cont_text, font_body)
+                lx = _line_left_x(cont_w)
+                _draw_text(lx, y, cont_text, value_color, font_body, anchor="la")
+                y += spacing
         else:
-            _draw_text(x, y, line_text, value_color, font_body)
-        y += spacing
+            line_text = f"{key}: {value}"
+            # Split label / value and colour them individually
+            if ": " in line_text:
+                label_part, value_part = line_text.split(": ", 1)
+                label_str = label_part + ": "
+                label_w = _text_width(label_str, font_body)
+                line_w = _text_width(line_text, font_body)
+                lx = _line_left_x(line_w)
+                _draw_text(lx, y, label_str, label_color, font_body, anchor="la")
+                _draw_text(lx + label_w, y, value_part, value_color, font_body, anchor="la")
+            else:
+                _draw_text(x, y, line_text, value_color, font_body)
+            y += spacing
 
     out = cfg.get("output_file", "wallpaper_output.bmp")
     out = _resolve_path(out) or "wallpaper_output.bmp"

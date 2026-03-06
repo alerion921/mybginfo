@@ -2,3 +2,5 @@ Pillow>=10.0.0
 psutil>=5.9.0
 # Windows only (optional) – required for the Windows service feature
 pywin32>=306; sys_platform == "win32"
+# Optional – improves NVIDIA GPU detection (name, usage, temperature)
+pynvml>=11.0.0
