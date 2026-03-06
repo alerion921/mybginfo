@@ -12,8 +12,10 @@ DEFAULT_CONFIG = {
     "font_size": 26,
     "line_spacing": 38,
     "fields": [
-        "Hostname", "User", "OS", "CPU", "GPU", "CPU Cores", "RAM", "RAM Used",
-        "Disk Total", "Disk Used", "IP Address", "Boot Time", "Uptime", "Date/Time"
+        "Hostname", "User", "OS", "CPU", "GPU", "CPU Cores", "CPU Usage",
+        "CPU Temp", "RAM", "RAM Used", "Disk Total", "Disk Used", "Disk Free",
+        "All Disks", "IP Address", "Network Interface", "Timezone",
+        "Boot Time", "Uptime", "Date/Time"
     ],
     # Layout / alignment
     "text_align": "left",       # "left" | "center" | "right"  (new key)

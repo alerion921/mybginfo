@@ -223,7 +223,7 @@ def get_info() -> dict:
         info["RAM"] = f"{mem.total / (1024 ** 3):.1f} GB"
         info["RAM Used"] = f"{mem.used / (1024 ** 3):.1f} GB ({mem.percent}%)"
 
-        # Disk total / used for the system drive
+        # Disk total / used / free for the system drive
         try:
             system_root = os.path.splitdrive(os.path.expanduser("~"))[0] or "/"
             if not system_root.endswith(os.sep):
@@ -231,9 +231,29 @@ def get_info() -> dict:
             disk = psutil.disk_usage(system_root)
             info["Disk Total"] = f"{disk.total / (1024 ** 3):.1f} GB"
             info["Disk Used"] = f"{disk.used / (1024 ** 3):.1f} GB ({disk.percent}%)"
+            info["Disk Free"] = f"{disk.free / (1024 ** 3):.1f} GB"
         except Exception:
             info["Disk Total"] = "N/A"
             info["Disk Used"] = "N/A"
+            info["Disk Free"] = "N/A"
+
+        # All mounted disk partitions
+        try:
+            parts = []
+            for part in psutil.disk_partitions(all=False):
+                if "cdrom" in part.opts or part.fstype == "":
+                    continue
+                try:
+                    usage = psutil.disk_usage(part.mountpoint)
+                    parts.append(
+                        f"{part.mountpoint}  {usage.used / (1024 ** 3):.1f} GB"
+                        f" / {usage.total / (1024 ** 3):.1f} GB ({usage.percent}%)"
+                    )
+                except PermissionError:
+                    continue
+            info["All Disks"] = "   |   ".join(parts) if parts else "N/A"
+        except Exception:
+            info["All Disks"] = "N/A"
 
         # Boot time
         try:
@@ -270,13 +290,48 @@ def get_info() -> dict:
         info["RAM Used"] = "N/A"
         info["Disk Total"] = "N/A"
         info["Disk Used"] = "N/A"
+        info["Disk Free"] = "N/A"
+        info["All Disks"] = "N/A"
         info["Boot Time"] = "N/A"
         info["Uptime"] = "N/A"
         info["Network Sent"] = "N/A"
         info["Network Recv"] = "N/A"
 
-    # GPU
+    # GPU name
     info["GPU"] = _get_gpu_name()
+
+    # GPU usage / temperature (via GPUtil)
+    if _HAS_GPUTIL:
+        try:
+            gpus = GPUtil.getGPUs()
+            if gpus:
+                info["GPU Usage"] = f"{gpus[0].load * 100:.0f}%"
+                info["GPU Temp"] = f"{gpus[0].temperature:.0f}°C"
+            else:
+                info["GPU Usage"] = "N/A"
+                info["GPU Temp"] = "N/A"
+        except Exception:
+            info["GPU Usage"] = "N/A"
+            info["GPU Temp"] = "N/A"
+    else:
+        info["GPU Usage"] = "N/A"
+        info["GPU Temp"] = "N/A"
+
+    # CPU temperature (Linux/macOS; Windows rarely exposes this without 3rd-party drivers)
+    # Sensor key priority: Intel (coretemp), AMD (k10temp), ARM (cpu_thermal), ACPI (acpitz)
+    try:
+        temps = psutil.sensors_temperatures() if _HAS_PSUTIL else {}
+        cpu_temp_found = False
+        for key in ("coretemp", "k10temp", "cpu_thermal", "acpitz"):
+            if key in temps and temps[key]:
+                t = temps[key][0].current
+                info["CPU Temp"] = f"{t:.0f}°C"
+                cpu_temp_found = True
+                break
+        if not cpu_temp_found:
+            info["CPU Temp"] = "N/A"
+    except (AttributeError, Exception):
+        info["CPU Temp"] = "N/A"
 
     # Screen resolution
     info["Screen Resolution"] = _get_screen_resolution()
@@ -285,9 +340,44 @@ def get_info() -> dict:
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
             s.connect(("8.8.8.8", 80))
-            info["IP Address"] = s.getsockname()[0]
+            local_ip = s.getsockname()[0]
+            info["IP Address"] = local_ip
     except Exception:
         info["IP Address"] = "N/A"
+        local_ip = None
+
+    # Active network interface
+    try:
+        if local_ip and _HAS_PSUTIL:
+            for iface, addrs in psutil.net_if_addrs().items():
+                for addr in addrs:
+                    if addr.address == local_ip:
+                        info["Network Interface"] = iface
+                        break
+                else:
+                    continue
+                break
+            else:
+                info["Network Interface"] = "N/A"
+        else:
+            info["Network Interface"] = "N/A"
+    except Exception:
+        info["Network Interface"] = "N/A"
+
+    # Public IP address
+    try:
+        import urllib.request  # noqa: PLC0415
+        with urllib.request.urlopen("https://api.ipify.org", timeout=3) as resp:
+            info["Public IP"] = resp.read().decode().strip()
+    except Exception:
+        info["Public IP"] = "N/A"
+
+    # Local timezone
+    try:
+        import time as _time  # noqa: PLC0415
+        info["Timezone"] = _time.strftime("%Z (UTC%z)")
+    except Exception:
+        info["Timezone"] = "N/A"
 
     # Current date/time
     info["Date/Time"] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")

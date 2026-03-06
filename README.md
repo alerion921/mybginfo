@@ -103,7 +103,9 @@ Configuration lives in `config/bginfo.json`. Missing keys automatically fall bac
 | `refresh_interval` | int | Seconds between auto-refresh updates (0 = disabled). Default: `300`. |
 | `fields` | list of strings | Which system info fields to display. |
 
-**Available fields:** `Hostname`, `User`, `OS`, `Version`, `CPU`, `GPU`, `CPU Cores`, `CPU Usage`, `RAM`, `RAM Used`, `Disk Total`, `Disk Used`, `IP Address`, `Boot Time`, `Uptime`, `Date/Time`, `Screen Resolution`, `Network Sent`, `Network Recv`
+**Available fields:** `Hostname`, `User`, `OS`, `Version`, `CPU`, `GPU`, `CPU Cores`, `CPU Usage`, `CPU Temp`, `GPU Usage`, `GPU Temp`, `RAM`, `RAM Used`, `Disk Total`, `Disk Used`, `Disk Free`, `All Disks`, `IP Address`, `Public IP`, `Network Interface`, `Timezone`, `Boot Time`, `Uptime`, `Date/Time`, `Screen Resolution`, `Network Sent`, `Network Recv`
+
+> **Note:** `Public IP` makes an outbound HTTP request on every refresh — add it only if you need it and are comfortable with the small latency it adds.
 
 ---
 
@@ -119,6 +121,8 @@ On Windows, MyBGInfo can run as a background service that automatically refreshe
 The service reads `refresh_interval` from `config/bginfo.json` each cycle, so you can change the interval without reinstalling the service.
 
 > **Note:** Requires `pywin32` (`pip install pywin32`). On Linux and macOS use the crontab / LaunchAgent installers instead.
+>
+> **Fix:** The **Create Service** / **Remove Service** buttons now invoke the service installer as `python -m src.service_manager <action>` with the project root as the working directory, ensuring all package imports resolve correctly. A clear error dialog is shown if `pywin32` is not installed.
 
 ---
 
