@@ -11,34 +11,43 @@ import time
 SERVICE_NAME = "MyBGInfoService"
 SERVICE_DISPLAY = "MyBGInfo Background Refresher"
 
-# Path to this script – used when registering the service.
-_SCRIPT = os.path.abspath(__file__)
+# Project root directory (two levels up from this file: src/ -> project root)
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def _run_elevated(action: str) -> None:
+    """Request elevation via runas and invoke this module with *action*."""
+    import ctypes  # noqa: PLC0415
+    ctypes.windll.shell32.ShellExecuteW(
+        None,
+        "runas",
+        sys.executable,
+        f"-m src.service_manager {action}",
+        _PROJECT_ROOT,   # lpDirectory – ensures package imports resolve
+        1,
+    )
 
 
 def install_service() -> None:
     """Install and start the Windows service (requests elevation via runas)."""
-    import ctypes  # noqa: PLC0415
-    ctypes.windll.shell32.ShellExecuteW(
-        None,
-        "runas",
-        sys.executable,
-        f'"{_SCRIPT}" install',
-        None,
-        1,
-    )
+    try:
+        import win32serviceutil  # noqa: PLC0415, F401
+    except ImportError as exc:
+        raise RuntimeError(
+            "pywin32 is not installed. Run: pip install pywin32"
+        ) from exc
+    _run_elevated("install")
 
 
 def remove_service() -> None:
     """Stop and remove the Windows service (requests elevation via runas)."""
-    import ctypes  # noqa: PLC0415
-    ctypes.windll.shell32.ShellExecuteW(
-        None,
-        "runas",
-        sys.executable,
-        f'"{_SCRIPT}" remove',
-        None,
-        1,
-    )
+    try:
+        import win32serviceutil  # noqa: PLC0415, F401
+    except ImportError as exc:
+        raise RuntimeError(
+            "pywin32 is not installed. Run: pip install pywin32"
+        ) from exc
+    _run_elevated("remove")
 
 
 try:
@@ -96,7 +105,7 @@ except ImportError:
 
 
 if __name__ == "__main__":
-    # Allow direct invocation: python service_manager.py install|remove|start|stop
+    # Allow module invocation: python -m src.service_manager install|remove|start|stop
     try:
         win32serviceutil.HandleCommandLine(MyBGInfoService)
     except NameError:
