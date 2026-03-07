@@ -61,10 +61,10 @@ class BGInfoGUI:
         )
 
         if _platform.system() == "Windows":
-            ttk.Button(btn_frame, text="Install Service", command=self._create_service).pack(
+            ttk.Button(btn_frame, text="Install Scheduled Task", command=self._create_service).pack(
                 side="left", padx=4
             )
-            ttk.Button(btn_frame, text="Remove Service", command=self._remove_service).pack(
+            ttk.Button(btn_frame, text="Remove Scheduled Task", command=self._remove_service).pack(
                 side="left", padx=4
             )
             ttk.Button(btn_frame, text="🔒 Run as Admin", command=self._relaunch_elevated).pack(
@@ -531,21 +531,22 @@ class BGInfoGUI:
         cfg = self._build_config()
         save_config(cfg)
         interval = cfg["refresh_interval"]
+        interval_minutes = max(1, interval // 60)
         try:
             if system == "Windows":
-                from src.service_manager import install_service  # noqa: PLC0415
+                from src.service_manager import install_task_scheduler  # noqa: PLC0415
                 messagebox.showinfo(
-                    "Install Service",
-                    "An administrator prompt will appear.\n"
-                    "Please approve it to install the background service.\n\n"
-                    "The service will run silently in the background\n"
-                    "and will be visible in services.msc as\n"
-                    "\"MyBGInfo Background Refresher\".",
+                    "Install Scheduled Task",
+                    "Installing a Windows Task Scheduler task to refresh\n"
+                    "the wallpaper automatically.\n\n"
+                    f"The task will run every {interval_minutes} minute(s)\n"
+                    "and is visible in Task Scheduler as \"MyBGInfoRefresh\".",
                 )
-                install_service()
+                install_task_scheduler(interval_minutes=interval_minutes)
+                messagebox.showinfo("Success", "Scheduled task installed.")
             elif system == "Linux":
                 from src.service_manager import install_linux_autostart  # noqa: PLC0415
-                install_linux_autostart(interval_minutes=max(1, interval // 60))
+                install_linux_autostart(interval_minutes=interval_minutes)
                 messagebox.showinfo("Success", "Autostart enabled.")
             elif system == "Darwin":
                 from src.service_manager import install_macos_launchagent  # noqa: PLC0415
@@ -560,13 +561,9 @@ class BGInfoGUI:
         system = _platform.system()
         try:
             if system == "Windows":
-                from src.service_manager import remove_service  # noqa: PLC0415
-                messagebox.showinfo(
-                    "Remove Service",
-                    "An administrator prompt will appear.\n"
-                    "Please approve it to remove the background service.",
-                )
-                remove_service()
+                from src.service_manager import remove_task_scheduler  # noqa: PLC0415
+                remove_task_scheduler()
+                messagebox.showinfo("Success", "Scheduled task removed.")
             elif system == "Linux":
                 from src.service_manager import remove_linux_autostart  # noqa: PLC0415
                 remove_linux_autostart()

@@ -37,15 +37,49 @@ def _run_elevated(action: str) -> None:
 
 def _do_install() -> None:
     """Actually install (with auto-start) and start the service (must run elevated)."""
+    import site  # noqa: PLC0415
     import win32service  # noqa: PLC0415
     import win32serviceutil  # noqa: PLC0415
+
+    # Resolve PythonService.exe – it lives alongside pywin32 DLLs in
+    # site-packages/pywin32_system32, NOT alongside python.exe.
+    _svc_exe = os.path.join(
+        os.path.dirname(sys.executable),
+        "Lib",
+        "site-packages",
+        "pywin32_system32",
+        "PythonService.exe",
+    )
+    if not os.path.exists(_svc_exe):
+        # Fallback: search all site-packages directories.
+        for sp in site.getsitepackages():
+            candidate = os.path.join(sp, "pywin32_system32", "PythonService.exe")
+            if os.path.exists(candidate):
+                _svc_exe = candidate
+                break
+
     win32serviceutil.InstallService(
         pythonClassString="src.service_manager.MyBGInfoService",
         serviceName=SERVICE_NAME,
         displayName=SERVICE_DISPLAY,
         startType=win32service.SERVICE_AUTO_START,
-        exeName=sys.executable,
+        exeName=_svc_exe,
     )
+
+    # Add project root to the service's Python path via registry so imports
+    # resolve correctly when PythonService.exe runs from C:\Windows\System32.
+    import winreg  # noqa: PLC0415
+    key = winreg.OpenKey(
+        winreg.HKEY_LOCAL_MACHINE,
+        rf"SYSTEM\CurrentControlSet\Services\{SERVICE_NAME}",
+        0,
+        winreg.KEY_SET_VALUE,
+    )
+    try:
+        winreg.SetValueEx(key, "PythonPath", 0, winreg.REG_SZ, _PROJECT_ROOT)
+    finally:
+        winreg.CloseKey(key)
+
     win32serviceutil.StartService(SERVICE_NAME)
 
 
@@ -122,7 +156,7 @@ def install_task_scheduler(interval_minutes: int = 5) -> None:
         '  <Actions Context="Author">\n'
         "    <Exec>\n"
         f"      <Command>{_xml_escape(python_exe)}</Command>\n"
-        f'      <Arguments>"{_xml_escape(script)}"</Arguments>\n'
+        f'      <Arguments>"{_xml_escape(script)}" --once</Arguments>\n'
         f"      <WorkingDirectory>{_xml_escape(_PROJECT_ROOT)}</WorkingDirectory>\n"
         "    </Exec>\n"
         "  </Actions>\n"
@@ -268,7 +302,7 @@ def get_task_status() -> str:
     """Return a human-readable status string for the platform autostart mechanism."""
     system = platform.system()
     if system == "Windows":
-        return _query_windows_service()
+        return _query_windows_task()
     if system == "Linux":
         return _query_linux_autostart()
     if system == "Darwin":
@@ -453,6 +487,7 @@ try:
 
         _svc_name_ = SERVICE_NAME
         _svc_display_name_ = SERVICE_DISPLAY
+        _svc_reg_class_ = "src.service_manager.MyBGInfoService"
         _svc_description_ = (
             "Periodically refreshes the desktop wallpaper with live system "
             "information (CPU, RAM, disk, etc.).  Runs silently in the background."

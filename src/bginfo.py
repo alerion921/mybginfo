@@ -5,7 +5,6 @@ import hashlib
 import os
 import platform
 import threading
-import time
 
 from PIL import Image, ImageDraw, ImageFont
 
@@ -315,6 +314,11 @@ def main() -> None:
         metavar="N",
         help="Auto-refresh interval in seconds (0 to disable; overrides config)",
     )
+    parser.add_argument(
+        "--once",
+        action="store_true",
+        help="Generate and apply the wallpaper exactly once and exit (for use by schedulers)",
+    )
     args = parser.parse_args()
 
     if args.gui:
@@ -328,13 +332,19 @@ def main() -> None:
         if args.interval is not None:
             cfg["refresh_interval"] = args.interval
 
+        # --once: generate wallpaper once and exit immediately (used by Task Scheduler)
+        if args.once:
+            out = generate_wallpaper(cfg)
+            set_wallpaper(out)
+            print(f"Wallpaper updated: {out}")
+            return
+
         interval = cfg.get("refresh_interval", 0)
         if interval and interval > 0:
             _, stop_event = start_auto_refresh(interval=interval)
             print(f"Auto-refresh started (every {interval}s). Press Ctrl+C to stop.")
             try:
-                while True:
-                    time.sleep(1)
+                stop_event.wait()
             except KeyboardInterrupt:
                 stop_event.set()
                 print("Auto-refresh stopped.")
