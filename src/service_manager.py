@@ -217,11 +217,12 @@ def _query_linux_autostart() -> str:
             return "Installed"
 
     # Fallback: check cron
+    _cron_marker = os.path.join(_PROJECT_ROOT, "__main__.py")
     try:
         existing = subprocess.check_output(
             ["crontab", "-l"], stderr=subprocess.DEVNULL
         ).decode()
-        if "__main__.py" in existing:
+        if _cron_marker in existing:
             return "Installed (cron)"
     except Exception:
         pass
