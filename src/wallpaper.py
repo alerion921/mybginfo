@@ -33,11 +33,37 @@ def _set_wallpaper_windows(path):
 
 
 def _set_wallpaper_macos(path):
-    """Set wallpaper on macOS using osascript."""
-    script = (
-        f'tell application "Finder" to set desktop picture to POSIX file "{path}"'
-    )
-    subprocess.run(["osascript", "-e", script], check=True)
+    """Set wallpaper on macOS, trying multiple methods."""
+    # Method 1: System Events (works on macOS 10.14+, sets all desktops)
+    try:
+        script = (
+            'tell application "System Events"\n'
+            '    set desktopCount to count of desktops\n'
+            '    repeat with desktopNumber from 1 to desktopCount\n'
+            '        tell desktop desktopNumber\n'
+            f'            set picture to POSIX file "{path}"\n'
+            '        end tell\n'
+            '    end repeat\n'
+            'end tell'
+        )
+        subprocess.run(["osascript", "-e", script], check=True, timeout=10)
+        return
+    except Exception:
+        pass
+
+    # Method 2: Finder (legacy fallback)
+    try:
+        script = f'tell application "Finder" to set desktop picture to POSIX file "{path}"'
+        subprocess.run(["osascript", "-e", script], check=True, timeout=10)
+        return
+    except Exception:
+        pass
+
+    # Method 3: wallpaper CLI (if installed via Homebrew)
+    try:
+        subprocess.run(["wallpaper", "set", path], check=True, timeout=10)
+    except (FileNotFoundError, Exception):
+        pass
 
 
 def _set_wallpaper_linux(path):
@@ -96,13 +122,58 @@ for (var i = 0; i < allDesktops.length; i++) {{
             ],
             check=True,
         )
+    elif "MATE" in desktop:
+        subprocess.run(
+            ["gsettings", "set", "org.mate.background", "picture-filename", path],
+            check=True,
+        )
+    elif "CINNAMON" in desktop or "X-CINNAMON" in desktop:
+        subprocess.run(
+            [
+                "gsettings", "set",
+                "org.cinnamon.desktop.background", "picture-uri",
+                f"file://{path}",
+            ],
+            check=True,
+        )
+    elif "LXDE" in desktop or "LXQT" in desktop:
+        try:
+            subprocess.run(["pcmanfm", "--set-wallpaper", path], check=True)
+        except FileNotFoundError:
+            pass
+    elif (
+        "SWAY" in desktop
+        or os.environ.get("WAYLAND_DISPLAY", "").upper()
+        or "HYPRLAND" in desktop
+    ):
+        if "HYPRLAND" in desktop:
+            try:
+                subprocess.run(
+                    ["hyprctl", "hyprpaper", "wallpaper", f",{path}"], check=True
+                )
+                return
+            except FileNotFoundError:
+                pass
+        # Try swww first (supports animations), then swaybg
+        try:
+            subprocess.run(["swww", "img", path], check=True)
+            return
+        except FileNotFoundError:
+            pass
+        try:
+            subprocess.run(["swaybg", "-i", path, "-m", "fill"], check=True)
+            return
+        except FileNotFoundError:
+            pass
     else:
-        # Fallback: try feh
+        # Fallback: try feh, then nitrogen
         try:
             subprocess.run(["feh", "--bg-scale", path], check=True)
         except FileNotFoundError:
-            print(
-                "Could not set wallpaper: unsupported desktop environment "
-                "and 'feh' is not installed.",
-                file=sys.stderr,
-            )
+            try:
+                subprocess.run(["nitrogen", "--set-scaled", path], check=True)
+            except FileNotFoundError:
+                print(
+                    "Could not set wallpaper: no supported tool found.",
+                    file=sys.stderr,
+                )

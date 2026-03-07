@@ -61,10 +61,20 @@ class BGInfoGUI:
         )
 
         if _platform.system() == "Windows":
-            ttk.Button(btn_frame, text="Create Service", command=self._create_service).pack(
+            ttk.Button(btn_frame, text="Create Task", command=self._create_service).pack(
                 side="left", padx=4
             )
-            ttk.Button(btn_frame, text="Remove Service", command=self._remove_service).pack(
+            ttk.Button(btn_frame, text="Remove Task", command=self._remove_service).pack(
+                side="left", padx=4
+            )
+            ttk.Button(btn_frame, text="🔒 Run as Admin", command=self._relaunch_elevated).pack(
+                side="left", padx=4
+            )
+        elif _platform.system() in ("Linux", "Darwin"):
+            ttk.Button(btn_frame, text="Enable Autostart", command=self._create_service).pack(
+                side="left", padx=4
+            )
+            ttk.Button(btn_frame, text="Disable Autostart", command=self._remove_service).pack(
                 side="left", padx=4
             )
 
@@ -484,7 +494,7 @@ class BGInfoGUI:
             set_wallpaper(out)
             messagebox.showinfo("Success", f"Wallpaper updated:\n{out}")
         except Exception as exc:
-            messagebox.showerror("Error", str(exc))
+            self._handle_error_with_elevation(exc, self._preview)
 
     def _save(self):
         """Save the current configuration to config/bginfo.json."""
@@ -493,25 +503,78 @@ class BGInfoGUI:
             save_config(cfg)
             messagebox.showinfo("Saved", "Configuration saved to config/bginfo.json")
         except Exception as exc:
-            messagebox.showerror("Error", str(exc))
+            self._handle_error_with_elevation(exc, self._save)
 
     def _create_service(self):
-        """Install the Windows background service."""
+        """Install the autostart mechanism for the current platform."""
+        system = _platform.system()
+        interval = self.cfg.get("refresh_interval", 300)
         try:
-            from src.service_manager import install_service  # noqa: PLC0415
-            install_service()
-            messagebox.showinfo("Service", "MyBGInfo service installation initiated.")
+            if system == "Windows":
+                from src.service_manager import install_task_scheduler  # noqa: PLC0415
+                install_task_scheduler(interval_minutes=max(1, interval // 60))
+                messagebox.showinfo("Success", "Scheduled task created successfully.\nIt will run every few minutes.")
+            elif system == "Linux":
+                from src.service_manager import install_linux_autostart  # noqa: PLC0415
+                install_linux_autostart(interval_minutes=max(1, interval // 60))
+                messagebox.showinfo("Success", "Autostart enabled.")
+            elif system == "Darwin":
+                from src.service_manager import install_macos_launchagent  # noqa: PLC0415
+                install_macos_launchagent(interval_seconds=interval)
+                messagebox.showinfo("Success", "LaunchAgent installed.")
+        except Exception as exc:
+            self._handle_error_with_elevation(exc, self._create_service)
+
+    def _remove_service(self):
+        """Remove the autostart mechanism for the current platform."""
+        system = _platform.system()
+        try:
+            if system == "Windows":
+                from src.service_manager import remove_task_scheduler  # noqa: PLC0415
+                remove_task_scheduler()
+                messagebox.showinfo("Success", "Scheduled task removed.")
+            elif system == "Linux":
+                from src.service_manager import remove_linux_autostart  # noqa: PLC0415
+                remove_linux_autostart()
+                messagebox.showinfo("Success", "Autostart disabled.")
+            elif system == "Darwin":
+                from src.service_manager import remove_macos_launchagent  # noqa: PLC0415
+                remove_macos_launchagent()
+                messagebox.showinfo("Success", "LaunchAgent removed.")
         except Exception as exc:
             messagebox.showerror("Error", str(exc))
 
-    def _remove_service(self):
-        """Remove the Windows background service."""
-        try:
-            from src.service_manager import remove_service  # noqa: PLC0415
-            remove_service()
-            messagebox.showinfo("Service", "MyBGInfo service removal initiated.")
-        except Exception as exc:
-            messagebox.showerror("Error", str(exc))
+    def _handle_error_with_elevation(self, exc: Exception, action_fn):
+        """Show an error dialog; offer elevation if the error looks permission-related."""
+        msg = str(exc)
+        needs_elevation = any(
+            k in msg.lower()
+            for k in ("permission", "access is denied", "elevation", "privilege", "uac")
+        )
+        if needs_elevation and _platform.system() == "Windows":
+            answer = messagebox.askyesno(
+                "Elevation Required",
+                f"This action requires administrator privileges.\n\nError: {msg}\n\n"
+                "Would you like to restart MyBGInfo as Administrator?",
+            )
+            if answer:
+                self._relaunch_elevated()
+        else:
+            messagebox.showerror("Error", msg)
+
+    def _relaunch_elevated(self):
+        """Relaunch the current process with UAC elevation (Windows only)."""
+        import ctypes  # noqa: PLC0415
+        import sys as _sys  # noqa: PLC0415
+        ctypes.windll.shell32.ShellExecuteW(
+            None,
+            "runas",
+            _sys.executable,
+            " ".join(_sys.argv),
+            None,
+            1,
+        )
+        self.root.destroy()
 
     def _reset(self):
         """Reset all fields to defaults."""
