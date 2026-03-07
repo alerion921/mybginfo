@@ -89,18 +89,24 @@ def install_task_scheduler(interval_minutes: int = 5) -> None:
     task_name = "MyBGInfoRefresh"
     python_exe = sys.executable
     script = os.path.join(_PROJECT_ROOT, "__main__.py")
-    subprocess.run(
-        [
-            "schtasks", "/Create", "/F",
-            "/TN", task_name,
-            "/TR", f'"{python_exe}" "{script}"',
-            "/SC", "MINUTE",
-            "/MO", str(max(1, interval_minutes)),
-            "/RL", "HIGHEST",
-            "/IT",
-        ],
-        check=True,
-    )
+    tr_value = f'"{python_exe}" "{script}"'
+    try:
+        subprocess.run(
+            [
+                "schtasks", "/Create", "/F",
+                "/TN", task_name,
+                "/TR", tr_value,
+                "/SC", "MINUTE",
+                "/MO", str(max(1, interval_minutes)),
+            ],
+            check=True,
+            capture_output=True,
+        )
+    except subprocess.CalledProcessError as exc:
+        stderr = exc.stderr.decode(errors="replace") if exc.stderr else ""
+        raise RuntimeError(
+            f"Failed to create scheduled task: {stderr.strip()}"
+        ) from exc
 
 
 def remove_task_scheduler() -> None:
@@ -110,6 +116,37 @@ def remove_task_scheduler() -> None:
         ["schtasks", "/Delete", "/F", "/TN", "MyBGInfoRefresh"],
         check=True,
     )
+
+
+def create_desktop_shortcut() -> None:
+    """Create a desktop shortcut to the application (Windows only, idempotent).
+
+    Uses ``pywin32``'s ``win32com.client`` to create a ``.lnk`` file on the
+    user's Desktop.  Fails silently if ``pywin32`` is not available.
+    """
+    shortcut_path = os.path.join(
+        os.environ.get("USERPROFILE", os.path.expanduser("~")),
+        "Desktop",
+        "MyBGInfo.lnk",
+    )
+    if os.path.exists(shortcut_path):
+        return
+    try:
+        import win32com.client  # noqa: PLC0415
+    except ImportError:
+        return
+    shell = win32com.client.Dispatch("WScript.Shell")
+    shortcut = shell.CreateShortcut(shortcut_path)
+    if getattr(sys, "frozen", False):
+        # Running as a frozen executable – no separate script needed.
+        shortcut.TargetPath = sys.executable
+        shortcut.Arguments = ""
+    else:
+        shortcut.TargetPath = sys.executable
+        shortcut.Arguments = f'"{os.path.join(_PROJECT_ROOT, "__main__.py")}"'
+    shortcut.WorkingDirectory = _PROJECT_ROOT
+    shortcut.IconLocation = sys.executable
+    shortcut.Save()
 
 
 # ---------------------------------------------------------------------------
