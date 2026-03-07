@@ -334,6 +334,25 @@ class BGInfoGUI:
         ttk.Label(frame, textvariable=self._status_var).grid(
             row=row, column=0, columnspan=2, sticky="w", pady=4
         )
+        row += 1
+
+        # --- Scheduled task / autostart status ---
+        ttk.Separator(frame, orient="horizontal").grid(
+            row=row, column=0, columnspan=2, sticky="ew", pady=8
+        )
+        row += 1
+
+        ttk.Label(frame, text="Scheduled Task Status:").grid(
+            row=row, column=0, sticky="w", pady=4
+        )
+        self._task_status_var = tk.StringVar(value="Checking…")
+        ttk.Label(frame, textvariable=self._task_status_var).grid(
+            row=row, column=1, sticky="w", padx=4
+        )
+        row += 1
+
+        # Query the current status asynchronously so the GUI doesn't block.
+        self.root.after(100, self._update_task_status)
 
     # ------------------------------------------------------------------
     # File / color pickers
@@ -508,7 +527,10 @@ class BGInfoGUI:
     def _create_service(self):
         """Install the autostart mechanism for the current platform."""
         system = _platform.system()
-        interval = self.cfg.get("refresh_interval", 300)
+        # Save current GUI settings so the scheduled task picks them up.
+        cfg = self._build_config()
+        save_config(cfg)
+        interval = cfg["refresh_interval"]
         try:
             if system == "Windows":
                 from src.service_manager import install_task_scheduler  # noqa: PLC0415
@@ -522,6 +544,7 @@ class BGInfoGUI:
                 from src.service_manager import install_macos_launchagent  # noqa: PLC0415
                 install_macos_launchagent(interval_seconds=interval)
                 messagebox.showinfo("Success", "LaunchAgent installed.")
+            self._update_task_status()
         except Exception as exc:
             self._handle_error_with_elevation(exc, self._create_service)
 
@@ -541,8 +564,18 @@ class BGInfoGUI:
                 from src.service_manager import remove_macos_launchagent  # noqa: PLC0415
                 remove_macos_launchagent()
                 messagebox.showinfo("Success", "LaunchAgent removed.")
+            self._update_task_status()
         except Exception as exc:
             messagebox.showerror("Error", str(exc))
+
+    def _update_task_status(self):
+        """Query the platform autostart mechanism and update the status label."""
+        from src.service_manager import get_task_status  # noqa: PLC0415
+        try:
+            status = get_task_status()
+        except Exception:
+            status = "Unknown"
+        self._task_status_var.set(status)
 
     def _handle_error_with_elevation(self, exc: Exception, action_fn):
         """Show an error dialog; offer elevation if the error looks permission-related."""
