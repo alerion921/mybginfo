@@ -7,7 +7,9 @@ available.
 import os
 import platform
 import sys
+import tempfile
 import time
+from xml.sax.saxutils import escape as _xml_escape
 
 SERVICE_NAME = "MyBGInfoService"
 SERVICE_DISPLAY = "MyBGInfo Background Refresher"
@@ -80,25 +82,69 @@ def remove_service() -> None:
 # ---------------------------------------------------------------------------
 
 def install_task_scheduler(interval_minutes: int = 5) -> None:
-    """Install a Windows Task Scheduler task that runs at logon and repeats.
+    """Install a Windows Task Scheduler task that repeats at the given interval.
 
-    Uses ``schtasks.exe`` so no elevation is required.  The task runs in the
-    user's interactive session which is required for wallpaper updates.
+    Uses an XML task definition imported via ``schtasks /Create /XML`` to avoid
+    command-line quoting issues with the ``/TR`` flag.  The task runs in the
+    user's interactive session (required for wallpaper updates) and does **not**
+    require elevation.
     """
     import subprocess  # noqa: PLC0415
+
     task_name = "MyBGInfoRefresh"
     python_exe = sys.executable
     script = os.path.join(_PROJECT_ROOT, "__main__.py")
-    tr_value = f'"{python_exe}" "{script}"'
+
+    # XML task definition – avoids /TR double-quoting problems entirely.
+    xml_content = (
+        '<?xml version="1.0" encoding="UTF-16"?>\n'
+        '<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">\n'
+        "  <Triggers>\n"
+        "    <TimeTrigger>\n"
+        "      <Repetition>\n"
+        f"        <Interval>PT{interval_minutes}M</Interval>\n"
+        "        <StopAtDurationEnd>false</StopAtDurationEnd>\n"
+        "      </Repetition>\n"
+        "      <StartBoundary>2000-01-01T00:00:00</StartBoundary>\n"
+        "      <Enabled>true</Enabled>\n"
+        "    </TimeTrigger>\n"
+        "  </Triggers>\n"
+        "  <Principals>\n"
+        '    <Principal id="Author">\n'
+        "      <LogonType>InteractiveToken</LogonType>\n"
+        "      <RunLevel>LeastPrivilege</RunLevel>\n"
+        "    </Principal>\n"
+        "  </Principals>\n"
+        '  <Actions Context="Author">\n'
+        "    <Exec>\n"
+        f"      <Command>{_xml_escape(python_exe)}</Command>\n"
+        f'      <Arguments>"{_xml_escape(script)}"</Arguments>\n'
+        f"      <WorkingDirectory>{_xml_escape(_PROJECT_ROOT)}</WorkingDirectory>\n"
+        "    </Exec>\n"
+        "  </Actions>\n"
+        "  <Settings>\n"
+        "    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>\n"
+        "    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>\n"
+        "    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>\n"
+        "    <AllowHardTerminate>true</AllowHardTerminate>\n"
+        "    <StartWhenAvailable>true</StartWhenAvailable>\n"
+        "    <AllowStartOnDemand>true</AllowStartOnDemand>\n"
+        "    <Enabled>true</Enabled>\n"
+        "    <Hidden>false</Hidden>\n"
+        "    <RunOnlyIfIdle>false</RunOnlyIfIdle>\n"
+        "    <WakeToRun>false</WakeToRun>\n"
+        "    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>\n"
+        "    <Priority>7</Priority>\n"
+        "  </Settings>\n"
+        "</Task>\n"
+    )
+
+    fd, xml_path = tempfile.mkstemp(suffix=".xml")
     try:
+        with os.fdopen(fd, "w", encoding="utf-16") as fh:
+            fh.write(xml_content)
         subprocess.run(
-            [
-                "schtasks", "/Create", "/F",
-                "/TN", task_name,
-                "/TR", tr_value,
-                "/SC", "MINUTE",
-                "/MO", str(max(1, interval_minutes)),
-            ],
+            ["schtasks", "/Create", "/F", "/TN", task_name, "/XML", xml_path],
             check=True,
             capture_output=True,
         )
@@ -107,15 +153,100 @@ def install_task_scheduler(interval_minutes: int = 5) -> None:
         raise RuntimeError(
             f"Failed to create scheduled task: {stderr.strip()}"
         ) from exc
+    finally:
+        try:
+            os.unlink(xml_path)
+        except OSError:
+            pass
 
 
 def remove_task_scheduler() -> None:
-    """Remove the MyBGInfo Windows Task Scheduler task."""
+    """Remove the MyBGInfo Windows Task Scheduler task.
+
+    Succeeds silently when the task does not exist so that the user is not
+    shown a confusing error after an already-deleted (or never-created) task.
+    """
     import subprocess  # noqa: PLC0415
-    subprocess.run(
+
+    result = subprocess.run(
         ["schtasks", "/Delete", "/F", "/TN", "MyBGInfoRefresh"],
-        check=True,
+        capture_output=True,
     )
+    if result.returncode != 0:
+        stderr = (result.stderr.decode(errors="replace") if result.stderr else "").lower()
+        # Tolerate "does not exist" / "cannot find" – the task is already gone.
+        if "does not exist" not in stderr and "cannot find" not in stderr:
+            raise RuntimeError(
+                f"Failed to remove scheduled task: "
+                f"{result.stderr.decode(errors='replace').strip() if result.stderr else 'unknown error'}"
+            )
+
+
+# ---------------------------------------------------------------------------
+# Task / autostart status query (cross-platform)
+# ---------------------------------------------------------------------------
+
+def _query_windows_task() -> str:
+    """Return the status of the MyBGInfoRefresh scheduled task on Windows."""
+    import subprocess  # noqa: PLC0415
+    try:
+        result = subprocess.run(
+            ["schtasks", "/Query", "/TN", "MyBGInfoRefresh"],
+            capture_output=True,
+        )
+        return "Installed" if result.returncode == 0 else "Not installed"
+    except Exception:
+        return "Unknown"
+
+
+def _query_linux_autostart() -> str:
+    """Return the status of the mybginfo autostart on Linux."""
+    import subprocess  # noqa: PLC0415
+
+    service_path = os.path.expanduser("~/.config/systemd/user/mybginfo.service")
+    if os.path.exists(service_path):
+        try:
+            result = subprocess.run(
+                ["systemctl", "--user", "is-active", "mybginfo.service"],
+                capture_output=True,
+            )
+            if result.returncode == 0:
+                return "Installed (active)"
+            return "Installed (inactive)"
+        except Exception:
+            return "Installed"
+
+    # Fallback: check cron
+    try:
+        existing = subprocess.check_output(
+            ["crontab", "-l"], stderr=subprocess.DEVNULL
+        ).decode()
+        if "__main__.py" in existing:
+            return "Installed (cron)"
+    except Exception:
+        pass
+
+    return "Not installed"
+
+
+def _query_macos_launchagent() -> str:
+    """Return the status of the mybginfo LaunchAgent on macOS."""
+    plist_path = os.path.expanduser(
+        "~/Library/LaunchAgents/com.mybginfo.refresh.plist"
+    )
+    return "Installed" if os.path.exists(plist_path) else "Not installed"
+
+
+def get_task_status() -> str:
+    """Return a human-readable status string for the platform autostart mechanism."""
+    system = platform.system()
+    if system == "Windows":
+        return _query_windows_task()
+    if system == "Linux":
+        return _query_linux_autostart()
+    if system == "Darwin":
+        return _query_macos_launchagent()
+    return "Unsupported platform"
 
 
 def create_desktop_shortcut() -> None:
