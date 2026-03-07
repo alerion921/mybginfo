@@ -1,6 +1,7 @@
 """Main entry point for MyBGInfo - BGInfo-like cross-platform tool."""
 import argparse
 import datetime
+import hashlib
 import os
 import threading
 import time
@@ -15,6 +16,11 @@ from src.wallpaper import set_wallpaper
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
+def _info_hash(info: dict) -> str:
+    """Return an MD5 hex digest of the info dict for change detection."""
+    return hashlib.md5(str(sorted(info.items())).encode()).hexdigest()
+
+
 def _resolve_path(path: str | None) -> str | None:
     """Resolve a path relative to the script directory when it is not absolute."""
     if path and not os.path.isabs(path):
@@ -22,11 +28,13 @@ def _resolve_path(path: str | None) -> str | None:
     return path
 
 
-def generate_wallpaper(cfg: dict) -> str:
+def generate_wallpaper(cfg: dict, info: dict | None = None) -> str:
     """Generate the wallpaper image with system information text.
 
     Args:
         cfg: Configuration dictionary.
+        info: Optional pre-fetched system info dict.  When ``None`` (default),
+            ``get_info()`` is called internally.
 
     Returns:
         Path to the saved output image.
@@ -51,7 +59,7 @@ def generate_wallpaper(cfg: dict) -> str:
         font_title = ImageFont.load_default()
         font_body = ImageFont.load_default()
 
-    info = get_info()
+    info = get_info() if info is None else info
     fields = cfg.get("fields", list(info.keys()))
     spacing = cfg.get("line_spacing", 38)
 
@@ -178,7 +186,28 @@ def generate_wallpaper(cfg: dict) -> str:
     # ------------------------------------------------------------------ #
     for key in fields:
         value = str(info.get(key, "N/A"))
-        if "\n" in value:
+        if key == "All Disks" and "\n" in value:
+            # Extra spacing gap before the All Disks header
+            y += spacing
+            sub_lines = value.split("\n")
+            # Draw the "All Disks:" label on its own line (first sub-line is empty)
+            label_str = f"{key}: "
+            label_w = _text_width(label_str, font_body)
+            lx = _line_left_x(label_w)
+            _draw_text(lx, y, label_str, label_color, font_body, anchor="la")
+            y += spacing
+            # Draw each disk entry (skip empty leading sub-line)
+            for sub in sub_lines[1:]:
+                if not sub:
+                    continue
+                cont_text = f"  {sub}"
+                cont_w = _text_width(cont_text, font_body)
+                lx = _line_left_x(cont_w)
+                _draw_text(lx, y, cont_text, value_color, font_body, anchor="la")
+                y += spacing
+            # Extra spacing gap after the last disk entry
+            y += spacing
+        elif "\n" in value:
             sub_lines = value.split("\n")
             # Draw first sub-line with label + first value
             line_text = f"{key}: {sub_lines[0]}"
@@ -241,15 +270,23 @@ def start_auto_refresh(
     stop_event = threading.Event()
 
     def _worker() -> None:
+        # NOTE: We must call set_wallpaper() every cycle because the OS reads
+        # the image file only when explicitly told to refresh. Overwriting the
+        # file on disk is NOT sufficient to update the desktop background.
+        _prev_hash: str | None = None
         while not stop_event.is_set():
             try:
                 cfg = load_config(cfg_path)
-                out = generate_wallpaper(cfg)
-                set_wallpaper(out)
-                ts = datetime.datetime.now().strftime("%H:%M:%S")
-                if _last_update is not None:
-                    _last_update.append(ts)
-                print(f"[auto-refresh] Wallpaper updated: {out}")
+                info = get_info()
+                h = _info_hash(info)
+                if h != _prev_hash:
+                    out = generate_wallpaper(cfg, info=info)
+                    set_wallpaper(out)
+                    _prev_hash = h
+                    ts = datetime.datetime.now().strftime("%H:%M:%S")
+                    if _last_update is not None:
+                        _last_update.append(ts)
+                    print(f"[auto-refresh] Wallpaper updated: {out}")
             except Exception as exc:
                 print(f"[auto-refresh] Error: {exc}")
             stop_event.wait(interval)

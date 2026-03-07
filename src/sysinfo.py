@@ -29,6 +29,12 @@ try:
 except ImportError:
     _HAS_SCREENINFO = False
 
+try:
+    import wmi as _wmi
+    _HAS_WMI = True
+except ImportError:
+    _HAS_WMI = False
+
 
 def get_windows_version_name(version_str: str, build_number: int) -> str:
     """Map a Windows version string and build number to a friendly name.
@@ -175,16 +181,33 @@ def _get_gpu_name() -> str:
                 pass
             return "Unknown"
         if system == "Linux":
-            result = subprocess.check_output(
-                ["lspci"],
-                stderr=subprocess.DEVNULL,
-            ).decode(errors="ignore")
-            for line in result.splitlines():
-                lower = line.lower()
-                if "vga" in lower or "3d" in lower or "display" in lower:
-                    # Strip the PCI address prefix, keep the device name
-                    parts = line.split(":", 2)
-                    return parts[-1].strip() if parts else line.strip()
+            # Try rocm-smi first for AMD GPUs
+            try:
+                result = subprocess.check_output(
+                    ["rocm-smi", "--showproductname"],
+                    stderr=subprocess.DEVNULL,
+                ).decode(errors="ignore")
+                for line in result.splitlines():
+                    if "GPU" in line or "Card" in line:
+                        parts = line.split(":", 1)
+                        if len(parts) == 2 and parts[1].strip():
+                            return parts[1].strip()
+            except (FileNotFoundError, Exception):
+                pass
+            # Fallback to lspci
+            try:
+                result = subprocess.check_output(
+                    ["lspci"],
+                    stderr=subprocess.DEVNULL,
+                ).decode(errors="ignore")
+                for line in result.splitlines():
+                    lower = line.lower()
+                    if "vga" in lower or "3d" in lower or "display" in lower:
+                        # Strip the PCI address prefix, keep the device name
+                        parts = line.split(":", 2)
+                        return parts[-1].strip() if parts else line.strip()
+            except Exception:
+                pass
             return "Unknown"
         if system == "Darwin":
             result = subprocess.check_output(
@@ -230,6 +253,150 @@ def _get_screen_resolution() -> str:
         except Exception:
             pass
     return "N/A"
+
+
+def _get_cpu_temp_windows() -> str:
+    """Attempt to read CPU temperature on Windows via WMI or WMIC.
+
+    Tries LibreHardwareMonitor, then OpenHardwareMonitor, then WMIC.
+    Returns a formatted temperature string like '65°C', or 'N/A' if all fail.
+    """
+    if _HAS_WMI:
+        # Try LibreHardwareMonitor first, then OpenHardwareMonitor
+        for namespace in (r"root\LibreHardwareMonitor", r"root\OpenHardwareMonitor"):
+            try:
+                w = _wmi.WMI(namespace=namespace)
+                sensors = w.Sensor()
+                # Prefer "CPU Package" temperature sensor
+                for s in sensors:
+                    if s.SensorType == "Temperature" and "CPU" in s.Name and "Package" in s.Name:
+                        return f"{s.Value:.0f}°C"
+                # Fallback: any CPU temperature sensor
+                for s in sensors:
+                    if s.SensorType == "Temperature" and "CPU" in s.Name:
+                        return f"{s.Value:.0f}°C"
+            except Exception:
+                continue
+
+    # Last resort: WMIC MSAcpi_ThermalZoneTemperature (tenths of Kelvin)
+    try:
+        result = subprocess.check_output(
+            ["wmic", "/namespace:\\\\root\\WMI", "path",
+             "MSAcpi_ThermalZoneTemperature", "get", "CurrentTemperature"],
+            stderr=subprocess.DEVNULL,
+        ).decode(errors="ignore")
+        for line in result.splitlines():
+            line = line.strip()
+            if line.isdigit():
+                celsius = (int(line) / 10.0) - 273.15
+                return f"{celsius:.0f}°C"
+    except Exception:
+        pass
+
+    return "N/A"
+
+
+def _get_amd_gpu_stats() -> dict:
+    """Return AMD GPU usage and temperature as {'usage': str, 'temp': str}.
+
+    Windows: tries LibreHardwareMonitor WMI.
+    Linux: tries rocm-smi.
+    Returns 'N/A' for any value that cannot be determined.
+    """
+    system = platform.system()
+    usage, temp = "N/A", "N/A"
+
+    if system == "Windows" and _HAS_WMI:
+        for namespace in (r"root\LibreHardwareMonitor", r"root\OpenHardwareMonitor"):
+            try:
+                w = _wmi.WMI(namespace=namespace)
+                sensors = w.Sensor()
+                for s in sensors:
+                    if "GPU" in s.Name:
+                        if s.SensorType == "Load" and "Core" in s.Name and usage == "N/A":
+                            usage = f"{s.Value:.0f}%"
+                        if s.SensorType == "Temperature" and temp == "N/A":
+                            temp = f"{s.Value:.0f}°C"
+                if usage != "N/A" or temp != "N/A":
+                    break
+            except Exception:
+                continue
+
+    elif system == "Linux":
+        try:
+            result = subprocess.check_output(
+                ["rocm-smi", "--showuse", "--showtemp"],
+                stderr=subprocess.DEVNULL,
+            ).decode(errors="ignore")
+            for line in result.splitlines():
+                line_lower = line.lower()
+                if usage == "N/A" and ("gpu use" in line_lower or "gpu load" in line_lower):
+                    parts = line.split(":")
+                    if len(parts) == 2:
+                        try:
+                            usage = f"{float(parts[1].strip().rstrip('%')):.0f}%"
+                        except ValueError:
+                            pass
+                if temp == "N/A" and "temperature" in line_lower and "(c)" in line_lower:
+                    parts = line.split(":")
+                    if len(parts) == 2:
+                        try:
+                            temp = f"{float(parts[1].strip()):.0f}°C"
+                        except ValueError:
+                            pass
+        except (FileNotFoundError, Exception):
+            pass
+
+    return {"usage": usage, "temp": temp}
+
+
+def _get_intel_gpu_stats() -> dict:
+    """Return Intel GPU usage and temperature as {'usage': str, 'temp': str}.
+
+    Linux: tries intel_gpu_top (requires igt-gpu-tools).
+    Windows: tries LibreHardwareMonitor WMI filtering for Intel sensors.
+    Returns 'N/A' for any value that cannot be determined.
+    """
+    import json as _json  # noqa: PLC0415
+
+    system = platform.system()
+    usage, temp = "N/A", "N/A"
+
+    if system == "Linux":
+        try:
+            result = subprocess.check_output(
+                ["intel_gpu_top", "-J", "-s", "250", "-c", "1"],
+                stderr=subprocess.DEVNULL,
+                timeout=2,
+            ).decode(errors="ignore")
+            data = _json.loads(result)
+            engines = data.get("engines", {})
+            for key, val in engines.items():
+                if "Render" in key or "3D" in key:
+                    busy = val.get("busy", None)
+                    if busy is not None:
+                        usage = f"{busy:.0f}%"
+                    break
+        except (FileNotFoundError, Exception):
+            pass
+
+    elif system == "Windows" and _HAS_WMI:
+        for namespace in (r"root\LibreHardwareMonitor", r"root\OpenHardwareMonitor"):
+            try:
+                w = _wmi.WMI(namespace=namespace)
+                sensors = w.Sensor()
+                for s in sensors:
+                    if "Intel" in s.Name or "GPU" in s.Name:
+                        if s.SensorType == "Load" and "Core" in s.Name and usage == "N/A":
+                            usage = f"{s.Value:.0f}%"
+                        if s.SensorType == "Temperature" and temp == "N/A":
+                            temp = f"{s.Value:.0f}°C"
+                if usage != "N/A" or temp != "N/A":
+                    break
+            except Exception:
+                continue
+
+    return {"usage": usage, "temp": temp}
 
 
 def get_info() -> dict:
@@ -307,7 +474,7 @@ def get_info() -> dict:
                     )
                 except PermissionError:
                     continue
-            info["All Disks"] = "\n".join(parts) if parts else "N/A"
+            info["All Disks"] = "\n" + "\n".join(parts) if parts else "N/A"
         except Exception:
             info["All Disks"] = "N/A"
 
@@ -389,21 +556,72 @@ def get_info() -> dict:
         info["GPU Usage"] = "N/A"
         info["GPU Temp"] = "N/A"
 
-    # CPU temperature (Linux/macOS; Windows rarely exposes this without 3rd-party drivers)
-    # Sensor key priority: Intel (coretemp), AMD (k10temp), ARM (cpu_thermal), ACPI (acpitz)
+    # If GPU usage/temp is still N/A, try AMD or Intel via platform helpers
+    if info.get("GPU Usage") == "N/A" or info.get("GPU Temp") == "N/A":
+        gpu_name_lower = info.get("GPU", "").lower()
+        if "amd" in gpu_name_lower or "radeon" in gpu_name_lower:
+            amd_stats = _get_amd_gpu_stats()
+            if info.get("GPU Usage") == "N/A":
+                info["GPU Usage"] = amd_stats["usage"]
+            if info.get("GPU Temp") == "N/A":
+                info["GPU Temp"] = amd_stats["temp"]
+        elif "intel" in gpu_name_lower:
+            intel_stats = _get_intel_gpu_stats()
+            if info.get("GPU Usage") == "N/A":
+                info["GPU Usage"] = intel_stats["usage"]
+            if info.get("GPU Temp") == "N/A":
+                info["GPU Temp"] = intel_stats["temp"]
+
+    # CPU temperature (Linux/macOS; Windows requires 3rd-party drivers like LibreHardwareMonitor)
+    # Sensor key priority: Intel (coretemp), AMD (k10temp/zenpower), ARM (cpu_thermal), ACPI (acpitz)
     try:
         temps = psutil.sensors_temperatures() if _HAS_PSUTIL else {}
         cpu_temp_found = False
-        for key in ("coretemp", "k10temp", "cpu_thermal", "acpitz"):
+        for key in ("coretemp", "k10temp", "zenpower", "nct6775", "it8", "thinkpad",
+                    "asus_wmi_sensors", "cpu_thermal", "acpitz"):
             if key in temps and temps[key]:
-                t = temps[key][0].current
-                info["CPU Temp"] = f"{t:.0f}°C"
-                cpu_temp_found = True
+                # Use first entry with a positive reading
+                for entry in temps[key]:
+                    if entry.current > 0:
+                        info["CPU Temp"] = f"{entry.current:.0f}°C"
+                        cpu_temp_found = True
+                        break
+            if cpu_temp_found:
                 break
         if not cpu_temp_found:
             info["CPU Temp"] = "N/A"
     except (AttributeError, Exception):
         info["CPU Temp"] = "N/A"
+
+    # Windows: try LibreHardwareMonitor / OpenHardwareMonitor / WMIC if still N/A
+    if platform.system() == "Windows" and info.get("CPU Temp") == "N/A":
+        info["CPU Temp"] = _get_cpu_temp_windows()
+
+    # macOS: try osx-cpu-temp CLI tool (no sudo required) or powermetrics (sudo)
+    if platform.system() == "Darwin" and info.get("CPU Temp") == "N/A":
+        try:
+            result = subprocess.check_output(
+                ["osx-cpu-temp"], stderr=subprocess.DEVNULL,
+            ).decode(errors="ignore").strip()
+            # Output is like "52.3°C" – extract the number
+            import re as _re  # noqa: PLC0415
+            m = _re.search(r"([\d.]+)", result)
+            if m:
+                info["CPU Temp"] = f"{float(m.group(1)):.0f}°C"
+        except (FileNotFoundError, Exception):
+            pass
+    if platform.system() == "Darwin" and info.get("CPU Temp") == "N/A":
+        try:
+            result = subprocess.check_output(
+                ["sudo", "powermetrics", "--samplers", "smc", "-n", "1", "-i", "1"],
+                stderr=subprocess.DEVNULL, timeout=5,
+            ).decode(errors="ignore")
+            import re as _re  # noqa: PLC0415
+            m = _re.search(r"CPU die temperature:\s*([\d.]+)", result)
+            if m:
+                info["CPU Temp"] = f"{float(m.group(1)):.0f}°C"
+        except Exception:
+            pass
 
     # Screen resolution
     info["Screen Resolution"] = _get_screen_resolution()
