@@ -21,13 +21,17 @@ _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 def _run_elevated(action: str) -> None:
     """Request elevation via runas and invoke this module with *action*."""
     import ctypes  # noqa: PLC0415
+    # Prefer pythonw.exe so no console window appears during installation.
+    pythonw = sys.executable.replace("python.exe", "pythonw.exe")
+    if not os.path.exists(pythonw):
+        pythonw = sys.executable
     ctypes.windll.shell32.ShellExecuteW(
         None,
         "runas",
-        sys.executable,
+        pythonw,
         f"-m src.service_manager {action}",
         _PROJECT_ROOT,   # lpDirectory – ensures package imports resolve
-        1,
+        0,               # SW_HIDE – no console window
     )
 
 
@@ -199,6 +203,28 @@ def _query_windows_task() -> str:
         return "Unknown"
 
 
+def _query_windows_service() -> str:
+    """Return the status of the MyBGInfoService Windows service."""
+    try:
+        import win32service  # noqa: PLC0415
+        import win32serviceutil  # noqa: PLC0415
+        status = win32serviceutil.QueryServiceStatus(SERVICE_NAME)
+        state = status[1]
+        if state == win32service.SERVICE_RUNNING:
+            return "Running"
+        if state == win32service.SERVICE_STOPPED:
+            return "Stopped (installed)"
+        if state == win32service.SERVICE_START_PENDING:
+            return "Starting"
+        if state == win32service.SERVICE_STOP_PENDING:
+            return "Stopping"
+        return "Installed"
+    except ImportError:
+        return "pywin32 not installed"
+    except Exception:
+        return "Not installed"
+
+
 def _query_linux_autostart() -> str:
     """Return the status of the mybginfo autostart on Linux."""
     import subprocess  # noqa: PLC0415
@@ -242,7 +268,7 @@ def get_task_status() -> str:
     """Return a human-readable status string for the platform autostart mechanism."""
     system = platform.system()
     if system == "Windows":
-        return _query_windows_task()
+        return _query_windows_service()
     if system == "Linux":
         return _query_linux_autostart()
     if system == "Darwin":
@@ -427,6 +453,10 @@ try:
 
         _svc_name_ = SERVICE_NAME
         _svc_display_name_ = SERVICE_DISPLAY
+        _svc_description_ = (
+            "Periodically refreshes the desktop wallpaper with live system "
+            "information (CPU, RAM, disk, etc.).  Runs silently in the background."
+        )
 
         def __init__(self, args):
             win32serviceutil.ServiceFramework.__init__(self, args)
