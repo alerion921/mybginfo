@@ -3,6 +3,7 @@ import argparse
 import datetime
 import hashlib
 import os
+import platform
 import threading
 import time
 
@@ -298,6 +299,13 @@ def start_auto_refresh(
 
 def main() -> None:
     """Parse arguments and either launch the GUI or generate the wallpaper."""
+    if platform.system() == "Windows":
+        try:
+            from src.service_manager import create_desktop_shortcut  # noqa: PLC0415
+            create_desktop_shortcut()
+        except Exception:
+            pass
+
     parser = argparse.ArgumentParser(description="MyBGInfo - Custom BGInfo Tool")
     parser.add_argument("--gui", action="store_true", help="Launch the GUI configurator")
     parser.add_argument(

@@ -574,7 +574,8 @@ class BGInfoGUI:
             None,
             1,
         )
-        self.root.destroy()
+        self.root.withdraw()
+        self.root.after(500, self.root.destroy)
 
     def _reset(self):
         """Reset all fields to defaults."""
