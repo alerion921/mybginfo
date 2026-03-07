@@ -18,7 +18,7 @@
 - 🧰 Tkinter GUI for visual configuration with live preview
 - ⚙️ JSON-based configuration (`config/bginfo.json`)
 - 📦 Windows installer (Inno Setup), and install scripts for Linux and macOS
-- 🔄 Windows service support – run as a background service via the **Create Service** button
+- 🔄 Windows service support – runs silently in the background via the **Install Service** button; visible in **services.msc**
 
 ---
 
@@ -111,18 +111,19 @@ Configuration lives in `config/bginfo.json`. Missing keys automatically fall bac
 
 ## Windows Service
 
-On Windows, MyBGInfo can run as a background service that automatically refreshes the wallpaper on a schedule.
+On Windows, MyBGInfo runs as a proper Windows Service that automatically refreshes the wallpaper on a schedule, with no visible console window.
 
 1. Open the GUI (`python -m src.bginfo --gui`).
 2. Set your desired **Refresh Interval** in the Refresh tab.
-3. Click **Create Service** at the bottom of the window (requires elevation / UAC prompt).
-4. To uninstall, click **Remove Service**.
+3. Click **Install Service** at the bottom of the window (an administrator / UAC prompt will appear).
+4. Once approved, the service starts automatically and is visible in **services.msc** as **"MyBGInfo Background Refresher"**.
+5. To uninstall, click **Remove Service**.
 
 The service reads `refresh_interval` from `config/bginfo.json` each cycle, so you can change the interval without reinstalling the service.
 
 > **Note:** Requires `pywin32` (`pip install pywin32`). On Linux and macOS use the crontab / LaunchAgent installers instead.
 >
-> **Fix:** The **Create Service** / **Remove Service** buttons now invoke the service installer as `python -m src.service_manager <action>` with the project root as the working directory, ensuring all package imports resolve correctly. A clear error dialog is shown if `pywin32` is not installed.
+> The service runs entirely in the background (no console window). All activity is logged to the Windows Event Log.
 
 ---
 
